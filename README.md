@@ -35,7 +35,6 @@ workflow:
 
 ```text
 terraform/                                  # Terraform used for the hands-on sandbox
-docs/LEARNING_PLAN.md                       # current learning checkpoint and next steps
 docs/TERRAFORM_NOTES.md                     # Terraform syntax notes
 docs/ATHENA_IAM_CLI_TESTING_NOTES.md        # Athena/IAM/Lake Formation test notes
 ```
