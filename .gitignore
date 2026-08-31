@@ -1,0 +1,38 @@
+.DS_Store
+
+# Terraform local working dirs
+**/.terraform/
+.terraform/
+
+# Terraform state and plans
+*.tfstate
+*.tfstate.*
+tfplan
+*.tfplan
+
+# Local variable files with real account/user values
+*.tfvars
+*.tfvars.json
+
+# Terraform crash/debug files
+crash.log
+crash.*.log
+
+# Local override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local assistant/session guidance and reference implementation material.
+# Keep the first public push focused on terraform/ and neutral notes.
+CLAUDE.md
+CODEX_UPDATE_PROMPT.md
+PROMPT.md
+terraform-ref/
+scripts/
+docs/ARCHITECTURE.md
+docs/BUILD_PHASES.md
+docs/COST_ESTIMATE.md
+docs/LEARNING_PLAN.md
+docs/TERRAFORM_REFERENCE.md

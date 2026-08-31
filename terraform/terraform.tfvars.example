@@ -1,0 +1,3 @@
+owner_tag      = "your-name"
+project_prefix = "lakehouse-lf-tbac"
+teams          = ["team1", "team2"]
