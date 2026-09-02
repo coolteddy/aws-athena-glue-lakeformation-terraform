@@ -523,6 +523,108 @@ Both must exist:
   resource has a matching tag
 ```
 
+## Phase 7: Move Future Defaults To Lake Formation Mode
+
+Add the Lake Formation data lake settings resource in Terraform:
+
+```hcl
+resource "aws_lakeformation_data_lake_settings" "this" {
+  admins = [var.your_iam_principal_arn]
+}
+```
+
+Do not add empty `create_database_default_permissions` or
+`create_table_default_permissions` blocks.
+
+The goal is:
+
+```text
+future databases and tables should not automatically receive IAMAllowedPrincipals
+```
+
+Important distinction:
+
+```text
+aws_lakeformation_data_lake_settings:
+  controls default permissions for future Data Catalog resources
+
+existing IAMAllowedPrincipals rows:
+  must be cleaned up separately from existing databases and tables
+```
+
+After applying the setting, the Lake Formation console should show:
+
+```text
+Use only IAM access control for new databases: unchecked
+Use only IAM access control for new tables in new databases: unchecked
+```
+
+This does not remove old `IAMAllowedPrincipals` grants from resources that
+already exist.
+
+## Phase 8: Final Proof After Cleaning Up Existing Defaults
+
+After manually revoking `IAMAllowedPrincipals` from team1 and team2 database
+and table resources, only the default database should still show
+`IAMAllowedPrincipals`.
+
+Expected remaining compatibility row:
+
+```text
+Principal: IAMAllowedPrincipals
+Resource:  Database default
+Permission: All
+```
+
+The reader role should still query team2:
+
+```bash
+aws athena start-query-execution \
+  --region eu-west-2 \
+  --work-group sandbox-lakehouse-lf-tbac-team2-workgroup \
+  --query-execution-context Database=lakehouse_lf_tbac_team2_sandbox \
+  --query-string "SELECT * FROM customers;"
+```
+
+Expected result:
+
+```text
+SUCCEEDED
+```
+
+Why:
+
+```text
+reader has LF-Tag policy for Classification = Shared
+team2 database has Classification = Shared
+team2 customers table inherits the tag
+```
+
+The reader role should fail against team1:
+
+```bash
+aws athena start-query-execution \
+  --region eu-west-2 \
+  --work-group sandbox-lakehouse-lf-tbac-team1-workgroup \
+  --query-execution-context Database=lakehouse_lf_tbac_team1_sandbox \
+  --query-string "SELECT * FROM customers;"
+```
+
+Expected result:
+
+```text
+FAILED
+Insufficient Lake Formation permission(s): Required Describe on lakehouse_lf_tbac_team1_sandbox
+```
+
+Why:
+
+```text
+team1 no longer has IAMAllowedPrincipals
+team1 does not have Classification = Shared
+reader has no direct Lake Formation grant for team1
+```
+
 ## Final Mental Model
 
 The full access equation is:
@@ -554,4 +656,13 @@ Required Describe:
 
 Relation contains no accessible columns:
   the role can see the table, but has no SELECT permission on columns
+```
+
+For existing resources, the migration order is:
+
+```text
+1. Give the intended role explicit Lake Formation access.
+2. Test that access works.
+3. Remove IAMAllowedPrincipals from the old database/table resources.
+4. Test again.
 ```

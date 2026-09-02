@@ -1,3 +1,7 @@
+resource "aws_lakeformation_data_lake_settings" "this" {
+  admins = [var.your_iam_principal_arn]
+}
+
 resource "aws_lakeformation_lf_tag" "classification" {
   key    = "Classification"
   values = ["Shared"]

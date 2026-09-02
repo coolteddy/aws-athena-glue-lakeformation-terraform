@@ -3,6 +3,57 @@
 These notes capture the Terraform concepts used in the `terraform/`
 Athena workgroup step.
 
+## Lake Formation Data Lake Settings
+
+The sandbox uses Terraform to control Lake Formation's account-level default
+Data Catalog behavior:
+
+```hcl
+resource "aws_lakeformation_data_lake_settings" "this" {
+  admins = [var.your_iam_principal_arn]
+}
+```
+
+This resource is account/region-level Lake Formation configuration, not a
+database or table permission.
+
+The important lesson:
+
+```text
+Data lake settings affect future databases and tables.
+They do not clean up permissions already attached to existing resources.
+```
+
+For this learning repo, we intentionally omit default permission blocks:
+
+```hcl
+create_database_default_permissions
+create_table_default_permissions
+```
+
+Omitting those blocks means newly created Data Catalog databases and tables
+should not automatically get the old `IAMAllowedPrincipals` compatibility
+grants.
+
+Do not write empty blocks like this:
+
+```hcl
+create_database_default_permissions {}
+create_table_default_permissions {}
+```
+
+AWS rejects that shape because the provider sends an incomplete permission
+entry without a valid principal ARN.
+
+The practical migration model is:
+
+```text
+1. Set future Lake Formation defaults with aws_lakeformation_data_lake_settings.
+2. Add explicit Lake Formation permissions or LF-Tag permissions.
+3. Remove old IAMAllowedPrincipals rows from existing resources.
+4. Test access with an assumed role.
+```
+
 ## `for_each` Uses Keys As Instance Addresses
 
 When a resource uses `for_each`, Terraform creates one resource instance for
