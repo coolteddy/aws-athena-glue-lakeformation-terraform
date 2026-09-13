@@ -37,3 +37,19 @@ output "reader_role_arn" {
 output "reader_assume_role_command" {
   value = "aws sts assume-role --role-arn ${aws_iam_role.reader.arn} --role-session-name reader-test"
 }
+
+output "lf_data_location_role_arn" {
+  value = aws_iam_role.lf_data_location.arn
+}
+
+output "registered_iceberg_location" {
+  value = "s3://${aws_s3_bucket.team_temp["team2"].bucket}/iceberg/"
+}
+
+output "iceberg_creator_role_arn" {
+  value = aws_iam_role.iceberg_creator.arn
+}
+
+output "iceberg_creator_assume_role_command" {
+  value = "aws sts assume-role --role-arn ${aws_iam_role.iceberg_creator.arn} --role-session-name iceberg-creator-test"
+}

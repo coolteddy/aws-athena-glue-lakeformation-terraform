@@ -2,6 +2,33 @@ resource "aws_lakeformation_data_lake_settings" "this" {
   admins = [var.your_iam_principal_arn]
 }
 
+resource "aws_lakeformation_resource" "team2_iceberg_location" {
+  arn      = "${aws_s3_bucket.team_temp["team2"].arn}/iceberg/"
+  role_arn = aws_iam_role.lf_data_location.arn
+
+  depends_on = [
+    aws_iam_role_policy.lf_data_location
+  ]
+}
+
+resource "aws_lakeformation_permissions" "iceberg_creator_database" {
+  principal   = aws_iam_role.iceberg_creator.arn
+  permissions = ["DESCRIBE", "CREATE_TABLE"]
+
+  database {
+    name = "iceberg_learning_db"
+  }
+}
+
+resource "aws_lakeformation_permissions" "iceberg_creator_data_location" {
+  principal   = aws_iam_role.iceberg_creator.arn
+  permissions = ["DATA_LOCATION_ACCESS"]
+
+  data_location {
+    arn = "${aws_s3_bucket.team_temp["team2"].arn}/iceberg"
+  }
+}
+
 resource "aws_lakeformation_lf_tag" "classification" {
   key    = "Classification"
   values = ["Shared"]

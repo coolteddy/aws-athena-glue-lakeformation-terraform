@@ -199,3 +199,149 @@ resource "aws_iam_role_policy" "reader" {
     ]
   })
 }
+
+resource "aws_iam_role" "lf_data_location" {
+  name                 = "${var.project_prefix}-data-location"
+  max_session_duration = 3600
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "lakeformation.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "lf_data_location" {
+  name = "${var.project_prefix}-data-location-policy"
+  role = aws_iam_role.lf_data_location.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ListTeam2TempBucket"
+        Effect = "Allow"
+        Action = [
+          "s3:GetBucketLocation",
+          "s3:ListBucket"
+        ]
+        Resource = aws_s3_bucket.team_temp["team2"].arn
+      },
+      {
+        Sid    = "ReadWriteTeam2TempObjects"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject"
+        ]
+        Resource = "${aws_s3_bucket.team_temp["team2"].arn}/*"
+      },
+      {
+        Sid    = "UseLearningKmsKey"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = aws_kms_key.learning.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role" "iceberg_creator" {
+  name                 = "${var.project_prefix}-iceberg-creator"
+  max_session_duration = 3600
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        AWS = var.your_iam_principal_arn
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "iceberg_creator" {
+  name = "${var.project_prefix}-iceberg-creator-policy"
+  role = aws_iam_role.iceberg_creator.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "UseTeam2AthenaWorkgroup"
+        Effect = "Allow"
+        Action = [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:StopQueryExecution",
+          "athena:GetWorkGroup"
+        ]
+        Resource = aws_athena_workgroup.team["team2"].arn
+      },
+      {
+        Sid    = "ManageIcebergGlueMetadata"
+        Effect = "Allow"
+        Action = [
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:CreateTable",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:UpdateTable",
+          "glue:GetPartition",
+          "glue:GetPartitions"
+        ]
+        Resource = [
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/iceberg_learning_db",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/iceberg_learning_db/*"
+        ]
+      },
+      {
+        Sid    = "UseLakeFormationCredentials"
+        Effect = "Allow"
+        Action = [
+          "lakeformation:GetDataAccess"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "WriteQueryResults"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetBucketLocation",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.shared["query-results"].arn,
+          "${aws_s3_bucket.shared["query-results"].arn}/*"
+        ]
+      },
+      {
+        Sid    = "UseLearningKmsKey"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = aws_kms_key.learning.arn
+      }
+    ]
+  })
+}
