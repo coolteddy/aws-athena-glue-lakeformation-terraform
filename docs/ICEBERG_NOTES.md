@@ -345,12 +345,50 @@ Iceberg table:
 The next stage is to compare Terraform-created Iceberg tables with job-created
 Iceberg tables.
 
-Planned AWS-native track:
+### Track A: Terraform Table, Athena DML
+
+This is the path already proven.
+
+```text
+Terraform:
+  creates Glue Iceberg table metadata
+  creates initial Iceberg metadata file
+
+Athena:
+  inserts rows with DML
+  writes Parquet data files
+  commits Iceberg snapshots/manifests
+```
+
+This path is useful when the platform wants table definitions controlled by
+Terraform, while data changes are still handled by a query engine.
+
+Terraform should not be used to insert rows directly. It is possible to abuse
+`local-exec` or `terraform_data` to run an Athena `INSERT`, but that mixes
+declarative infrastructure with imperative data mutation.
+
+Problems with inserting data from Terraform:
+
+```text
+re-runs can duplicate rows
+Terraform state does not track inserted table data cleanly
+partial failures are awkward
+destroy does not naturally remove inserted rows/snapshots
+Iceberg snapshots are data state, not infrastructure state
+```
+
+Use Athena, Glue Spark, or another Iceberg-aware engine for data writes.
+
+### Track B: AWS Glue ETL Spark Bootstrap
+
+This is the next AWS-native pattern to test.
 
 ```text
 Terraform:
   creates IAM roles
   creates Lake Formation grants
+  registers S3 data location
+  creates or references Glue database
   creates Glue job definition
 
 Glue ETL Spark job:
@@ -359,14 +397,67 @@ Glue ETL Spark job:
   commits Iceberg snapshots
 ```
 
-External writer research track:
+In this pattern, table creation and initial data write can both happen inside
+the Glue ETL Spark job.
+
+Example job responsibility:
 
 ```text
-Evaluate Spark, Flink, Trino, PyIceberg, or other Iceberg-aware tools.
+CREATE TABLE IF NOT EXISTS ... USING iceberg
+INSERT rows or write a DataFrame
+```
+
+The job uses Spark Iceberg integration under the hood:
+
+```text
+Glue ETL script
+  -> Spark SQL / DataFrame write
+  -> Iceberg Spark connector
+  -> Apache Iceberg libraries
+  -> S3 data files + metadata files
+  -> Glue Catalog table metadata
+```
+
+This is closer to a production platform pattern because an Iceberg-aware engine
+owns the Iceberg metadata and snapshot commits.
+
+The Glue job role would need IAM permissions such as:
+
+```text
+Glue catalog APIs
+S3 access to job scripts and temporary files
+CloudWatch Logs
+KMS access
+lakeformation:GetDataAccess
+```
+
+And Lake Formation permissions such as:
+
+```text
+DESCRIBE on database
+CREATE_TABLE on database
+DATA_LOCATION_ACCESS on registered S3 location
+table permissions needed for writes after creation
+```
+
+### Track C: External Iceberg Writer Research
+
+External tools are possible, but they must be Iceberg-aware.
+
+Candidates:
+
+```text
+Spark outside AWS
+Flink
+Trino
+PyIceberg
+EMR Serverless
+Databricks
+custom app using Iceberg libraries
 ```
 
 An external writer does not have to be AWS Glue, but it must be Iceberg-aware.
-It needs to:
+It needs to create the full Iceberg table state:
 
 ```text
 create valid Iceberg metadata files
@@ -376,4 +467,44 @@ update or register the Glue Catalog pointer
 work with IAM, KMS, and Lake Formation constraints
 ```
 
-Plain Parquet upload is not enough for Iceberg.
+The required catalog piece is important:
+
+```text
+Glue Catalog table must point to the current Iceberg metadata file.
+```
+
+An external tool can either:
+
+```text
+use Glue Catalog directly as the Iceberg catalog
+```
+
+or:
+
+```text
+write the metadata files to S3
+then register/update Glue Catalog to point at the current metadata file
+```
+
+Plain Parquet upload is not enough for Iceberg. Iceberg will ignore data files
+that are not committed into its metadata/snapshot chain.
+
+Evaluation questions for external tools:
+
+```text
+Can it write Iceberg v2 tables?
+Can it use AWS Glue Catalog as the Iceberg catalog?
+Can it write to S3 using AWS auth and KMS?
+Can it work with Lake Formation governed access?
+Does it require direct S3/IAM permissions instead of LF-governed access?
+Can it handle retries and concurrent commits safely?
+Can it update the Glue Catalog current metadata pointer correctly?
+Can it run cleanly in CI/CD or orchestration?
+```
+
+Current preference for this sandbox:
+
+```text
+1. Use AWS Glue ETL Spark as the AWS-native baseline.
+2. Research external Iceberg writers later as a separate architecture track.
+```
