@@ -37,6 +37,7 @@ workflow:
 terraform/                                  # Terraform used for the hands-on sandbox
 docs/TERRAFORM_NOTES.md                     # Terraform syntax notes
 docs/ATHENA_IAM_CLI_TESTING_NOTES.md        # Athena/IAM/Lake Formation test notes
+docs/ICEBERG_NOTES.md                       # Iceberg table and governed location notes
 ```
 
 ## Safety
