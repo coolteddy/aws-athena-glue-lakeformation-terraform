@@ -299,6 +299,62 @@ Keep Terraform for IAM roles, IAM trust policies, and normal LF grants.
 
 ## Cedar Expressions To Study Next
 
+Cedar is an authorization policy language developed by AWS and open-sourced in
+2023. AWS Verified Permissions uses full Cedar policies for application
+authorization.
+
+In Lake Formation ABAC, we are not writing full Cedar policies. Lake Formation
+still owns the main grant shape:
+
+```text
+principal -> permission -> database/table
+```
+
+Cedar is used for the condition-expression part:
+
+```text
+Does this caller have the required principal attributes?
+```
+
+Example:
+
+```cedar
+context.iam.principalTags.hasTag("department") &&
+context.iam.principalTags.getTag("department") == "analytics"
+```
+
+Meaning:
+
+```text
+This Lake Formation grant applies only when the caller has department=analytics.
+```
+
+For our test:
+
+```text
+Alice:
+  department = analytics
+  job_role = analyst
+
+Bob:
+  department = analytics
+  job_role = manager
+```
+
+The read grant matched both Alice and Bob because both had
+`department=analytics`.
+
+The insert grant matched Bob only because it also required `job_role=manager`.
+
+So for Lake Formation, Cedar knowledge needed now is:
+
+```text
+Check principal attributes.
+Compare attribute values.
+Combine conditions with AND.
+Understand that the LF grant applies only when the condition is true.
+```
+
 Read access condition:
 
 ```cedar
