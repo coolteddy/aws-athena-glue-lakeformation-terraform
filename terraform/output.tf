@@ -53,3 +53,22 @@ output "iceberg_creator_role_arn" {
 output "iceberg_creator_assume_role_command" {
   value = "aws sts assume-role --role-arn ${aws_iam_role.iceberg_creator.arn} --role-session-name iceberg-creator-test"
 }
+
+output "abac_test_role_arns" {
+  value = { for name, role in aws_iam_role.abac_test : name => role.arn }
+}
+
+output "abac_test_assume_role_commands" {
+  value = {
+    for name, role in aws_iam_role.abac_test :
+    name => "aws sts assume-role --role-arn ${role.arn} --role-session-name abac-${name}-test"
+  }
+}
+
+output "abac_permanent_analytics_role_arn" {
+  value = aws_iam_role.abac_permanent_analytics.arn
+}
+
+output "abac_permanent_analytics_assume_role_command" {
+  value = "aws sts assume-role --role-arn ${aws_iam_role.abac_permanent_analytics.arn} --role-session-name abac-permanent-analytics-test"
+}

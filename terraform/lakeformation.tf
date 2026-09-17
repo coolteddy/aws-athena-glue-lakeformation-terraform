@@ -29,6 +29,27 @@ resource "aws_lakeformation_permissions" "iceberg_creator_data_location" {
   }
 }
 
+# ------------------------------------------------------------------------------
+# Lake Formation ABAC learning grants
+#
+# The Iceberg ABAC grants are currently managed manually in the Lake Formation
+# console while we learn the Cedar-style condition syntax.
+#
+# Learning model:
+# - department=analytics can read the Iceberg learning table.
+# - department=analytics + job_role=manager can insert into the table.
+#
+# IAM trust policies control which roles are allowed to receive those session tags.
+# Lake Formation evaluates the resulting principal attributes with Cedar-style
+# condition expressions such as:
+#
+# context.iam.principalTags.hasTag("department") &&
+# context.iam.principalTags.getTag("department") == "analytics"
+#
+# Do not model these grants with aws_lakeformation_permissions yet. The AWS
+# provider used here does not expose the Lake Formation ABAC condition field on
+# that resource.
+# ------------------------------------------------------------------------------
 resource "aws_lakeformation_lf_tag" "classification" {
   key    = "Classification"
   values = ["Shared"]

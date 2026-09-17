@@ -7,13 +7,14 @@ access control with IAM principal tags and session tags.
 
 Pause the Iceberg expansion track for now.
 
-Next learning priority:
+Current learning priority:
 
 ```text
 Lake Formation ABAC:
-  principal attributes using IAM role tags first
-  then multiple attributes
-  then STS session tags
+  principal attributes using STS session tags
+  controlled session tags with IAM trust policies
+  permanent IAM role tags for comparison
+  Cedar-style Lake Formation ABAC conditions
 ```
 
 Iceberg follow-up remains later:
@@ -91,6 +92,298 @@ names and accounts change
 user-specific exceptions do not scale
 attributes express policy intent better
 ```
+
+## Hands-On Session: 2026-09-17
+
+### Resources Created
+
+Terraform created ABAC learning IAM roles:
+
+```text
+lakehouse-lf-tbac-abac-alice
+lakehouse-lf-tbac-abac-bob
+lakehouse-lf-tbac-abac-untagged
+lakehouse-lf-tbac-abac-permanent-analytics
+```
+
+Session-tag roles:
+
+```text
+alice:
+  allowed session tags:
+    department = analytics
+    job_role = analyst
+
+bob:
+  allowed session tags:
+    department = analytics
+    job_role = manager
+
+untagged:
+  can assume role
+  cannot pass ABAC session tags
+```
+
+Permanent-tag role:
+
+```text
+lakehouse-lf-tbac-abac-permanent-analytics:
+  fixed IAM role tags:
+    department = analytics
+    job_role = analyst
+  no sts:TagSession permission in trust policy
+```
+
+### Session Tag Guardrail
+
+The ABAC session-tag roles use IAM trust policy conditions to control which
+temporary attributes can be passed during `sts:AssumeRole`.
+
+Alice trust-policy intent:
+
+```text
+allow sts:AssumeRole
+allow sts:TagSession only when:
+  aws:RequestTag/department = analytics
+  aws:RequestTag/job_role = analyst
+  aws:TagKeys = [department, job_role]
+```
+
+Bob trust-policy intent:
+
+```text
+allow sts:AssumeRole
+allow sts:TagSession only when:
+  aws:RequestTag/department = analytics
+  aws:RequestTag/job_role = manager
+  aws:TagKeys = [department, job_role]
+```
+
+This proved an important production pattern:
+
+```text
+Lake Formation trusts principal attributes.
+IAM trust policy / SSO / IdP must control who can receive those attributes.
+```
+
+### STS Session Tag Tests
+
+Alice with correct attributes succeeded:
+
+```bash
+AWS_PROFILE=setnay-sandbox aws sts assume-role \
+  --role-arn arn:aws:iam::<account-id>:role/lakehouse-lf-tbac-abac-alice \
+  --role-session-name abac-alice-test \
+  --tags Key=department,Value=analytics Key=job_role,Value=analyst
+```
+
+Alice trying to pass Bob's manager attribute failed:
+
+```bash
+AWS_PROFILE=setnay-sandbox aws sts assume-role \
+  --role-arn arn:aws:iam::<account-id>:role/lakehouse-lf-tbac-abac-alice \
+  --role-session-name abac-alice-test \
+  --tags Key=department,Value=analytics Key=job_role,Value=manager
+```
+
+Bob with manager attributes succeeded:
+
+```bash
+AWS_PROFILE=setnay-sandbox aws sts assume-role \
+  --role-arn arn:aws:iam::<account-id>:role/lakehouse-lf-tbac-abac-bob \
+  --role-session-name abac-bob-test \
+  --tags Key=department,Value=analytics Key=job_role,Value=manager
+```
+
+### Lake Formation ABAC Tests
+
+Manual Lake Formation ABAC grants were created in the console.
+
+Read grant:
+
+```text
+principal attribute:
+  department = analytics
+
+permissions:
+  database DESCRIBE
+  table DESCRIBE, SELECT
+```
+
+Manager insert grant:
+
+```text
+principal attributes:
+  department = analytics
+  job_role = manager
+
+permission:
+  table INSERT
+```
+
+Observed behavior:
+
+```text
+Alice analyst:
+  SELECT succeeded
+  INSERT failed
+
+Bob manager:
+  eligible for INSERT because job_role=manager
+
+Permanent analytics analyst role:
+  SELECT succeeded
+  INSERT failed
+```
+
+The permanent-tag role test proved that Lake Formation ABAC can evaluate fixed
+IAM role tags as principal attributes, not only STS session tags.
+
+### Permanent IAM Role Tag Test
+
+The permanent role was assumed without passing `--tags`:
+
+```bash
+AWS_PROFILE=setnay-sandbox aws sts assume-role \
+  --role-arn arn:aws:iam::<account-id>:role/lakehouse-lf-tbac-abac-permanent-analytics \
+  --role-session-name abac-permanent-analytics-test
+```
+
+The role had fixed IAM tags:
+
+```text
+department = analytics
+job_role = analyst
+```
+
+Results:
+
+```text
+SELECT from customers_iceberg_tf:
+  SUCCEEDED
+
+INSERT into customers_iceberg_tf:
+  FAILED with Lake Formation AccessDenied
+```
+
+Lesson:
+
+```text
+Permanent IAM role tags are stable attributes on the role.
+STS session tags are temporary attributes on the assumed-role session.
+Lake Formation can evaluate both as principal attributes.
+```
+
+### Terraform Provider Note
+
+We tried to model Lake Formation ABAC grants with:
+
+```hcl
+condition {
+  expression = "context.iam.principalTags..."
+}
+```
+
+The AWS provider rejected this:
+
+```text
+Blocks of type "condition" are not expected here.
+```
+
+Decision for now:
+
+```text
+Keep Lake Formation ABAC grants manual in the console while learning Cedar.
+Keep Terraform for IAM roles, IAM trust policies, and normal LF grants.
+```
+
+## Cedar Expressions To Study Next
+
+Read access condition:
+
+```cedar
+context.iam.principalTags.hasTag("department") &&
+context.iam.principalTags.getTag("department") == "analytics"
+```
+
+Manager insert condition:
+
+```cedar
+context.iam.principalTags.hasTag("department") &&
+context.iam.principalTags.getTag("department") == "analytics" &&
+context.iam.principalTags.hasTag("job_role") &&
+context.iam.principalTags.getTag("job_role") == "manager"
+```
+
+Interpretation:
+
+```text
+hasTag(...) checks the attribute exists.
+getTag(...) reads the attribute value.
+&& means all conditions must be true.
+```
+
+## Cedar Scope Decision
+
+For the Lake Formation learning path, the Cedar knowledge needed for now is the
+ABAC condition-expression subset:
+
+```text
+principal attribute exists
+principal attribute equals expected value
+multiple attributes are joined with AND
+Lake Formation grant applies only when the condition is true
+```
+
+Full Cedar is more relevant to application authorization with AWS Verified
+Permissions. That can wait until an access portal or workflow app is in scope.
+
+Current priority after this session:
+
+```text
+1. IAM Identity Center / SSO attributes
+2. Microsoft Entra ID -> IAM Identity Center attribute integration
+3. Mini Posit-style Athena app that runs through Lake Formation
+4. Access portal / full Cedar / Verified Permissions later
+```
+
+Important rule for external tools/apps:
+
+```text
+If the app queries through Athena with governed credentials, Lake Formation is in
+the access path.
+
+If the app reads governed S3 data directly with broad IAM permissions, it can
+bypass Lake Formation.
+```
+
+## Later: LF ABAC Grants As Code
+
+Come back to Lake Formation ABAC grants as code after building more knowledge
+around IAM Identity Center, Entra, and external app/tool access patterns.
+
+Open questions:
+
+```text
+Can Terraform model Lake Formation ABAC conditions natively yet?
+If not, should we use AWS CLI grant-permissions with --condition?
+How do we import or reconcile manually created ABAC grants?
+How does the Cedar condition map exactly to the console-created grant?
+What is the cleanest production IaC pattern?
+```
+
+Decision for now:
+
+```text
+Do not automate LF ABAC grants yet.
+Keep manual console grants while learning the identity and access patterns first.
+```
+
+## Original Learning Phases
+
+The original phase order below is kept as a learning roadmap. The actual
+hands-on session started with STS session tags first, then added permanent role
+tags for comparison.
 
 ## Phase 1: One Principal Attribute
 
@@ -248,6 +541,10 @@ session tags are temporary per assumed-role session
 ## SSO Later
 
 SSO/IAM Identity Center is not needed for the first ABAC tests.
+
+Microsoft Entra ID can be explored later through IAM Identity Center. A Windows
+machine is not required; the requirement is access to a Microsoft Entra tenant
+with enough admin permissions to configure SAML/SCIM and attributes.
 
 Learning order:
 

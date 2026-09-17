@@ -345,3 +345,195 @@ resource "aws_iam_role_policy" "iceberg_creator" {
     ]
   })
 }
+
+# ------------------------------------------------------------------------------
+# ABAC session-tag learning roles
+#
+# These roles demonstrate Lake Formation ABAC with temporary STS session tags.
+# The IAM role itself does not have department/job_role business tags. Instead,
+# the trust policy controls which session tags may be passed during AssumeRole.
+#
+# Learning model:
+# - alice can receive department=analytics and job_role=analyst.
+# - bob can receive department=analytics and job_role=manager.
+# - untagged can assume the role but cannot receive ABAC session tags.
+#
+# Lake Formation evaluates the resulting principal attributes. IAM trust policy
+# acts as the guardrail that stops callers from inventing unauthorized attributes.
+# ------------------------------------------------------------------------------
+locals {
+  abac_test_roles = {
+    alice = {
+      session_tags = {
+        department = "analytics"
+        job_role   = "analyst"
+      }
+    }
+    bob = {
+      session_tags = {
+        department = "analytics"
+        job_role   = "manager"
+      }
+    }
+    untagged = {
+      session_tags = {}
+    }
+  }
+}
+
+resource "aws_iam_role" "abac_test" {
+  for_each = local.abac_test_roles
+
+  name                 = "${var.project_prefix}-abac-${each.key}"
+  max_session_duration = 3600
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      [
+        {
+          Sid    = "AllowAssumeRole"
+          Effect = "Allow"
+          Principal = {
+            AWS = var.your_iam_principal_arn
+          }
+          Action = "sts:AssumeRole"
+        }
+      ],
+      length(each.value.session_tags) > 0 ? [
+        {
+          Sid    = "AllowControlledSessionTags"
+          Effect = "Allow"
+          Principal = {
+            AWS = var.your_iam_principal_arn
+          }
+          Action = "sts:TagSession"
+          Condition = {
+            StringEquals = {
+              for key, value in each.value.session_tags :
+              "aws:RequestTag/${key}" => value
+            }
+            "ForAllValues:StringEquals" = {
+              "aws:TagKeys" = keys(each.value.session_tags)
+            }
+          }
+        }
+      ] : []
+    )
+  })
+}
+
+resource "aws_iam_role_policy" "abac_test" {
+  for_each = aws_iam_role.abac_test
+
+  name = "${each.value.name}-policy"
+  role = each.value.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "UseTeam2AthenaWorkgroup"
+        Effect = "Allow"
+        Action = [
+          "athena:StartQueryExecution",
+          "athena:GetQueryExecution",
+          "athena:GetQueryResults",
+          "athena:StopQueryExecution",
+          "athena:GetWorkGroup"
+        ]
+        Resource = aws_athena_workgroup.team["team2"].arn
+      },
+      {
+        Sid    = "ReadIcebergGlueMetadata"
+        Effect = "Allow"
+        Action = [
+          "glue:GetDatabase",
+          "glue:GetDatabases",
+          "glue:GetTable",
+          "glue:GetTables",
+          "glue:GetPartition",
+          "glue:GetPartitions"
+        ]
+        Resource = [
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:catalog",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:database/iceberg_learning_db",
+          "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/iceberg_learning_db/*"
+        ]
+      },
+      {
+        Sid    = "UseLakeFormationCredentials"
+        Effect = "Allow"
+        Action = [
+          "lakeformation:GetDataAccess"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "WriteQueryResults"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:GetBucketLocation",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          aws_s3_bucket.shared["query-results"].arn,
+          "${aws_s3_bucket.shared["query-results"].arn}/*"
+        ]
+      },
+      {
+        Sid    = "UseLearningKmsKey"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey",
+          "kms:DescribeKey"
+        ]
+        Resource = aws_kms_key.learning.arn
+      }
+    ]
+  })
+}
+
+# ------------------------------------------------------------------------------
+# ABAC permanent-tag learning role
+#
+# This role demonstrates the other Lake Formation ABAC source: fixed IAM role tags.
+# Unlike the Alice/Bob session-tag roles above, this role does not allow
+# sts:TagSession. Its ABAC attributes live directly on the IAM role.
+#
+# Learning model:
+# - Role tags are stable attributes managed by IAM/Terraform.
+# - STS session tags are temporary attributes passed at assume-role time.
+# - Lake Formation can evaluate both as principal attributes.
+# ------------------------------------------------------------------------------
+resource "aws_iam_role" "abac_permanent_analytics" {
+  name                 = "${var.project_prefix}-abac-permanent-analytics"
+  max_session_duration = 3600
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "AllowAssumeRole"
+      Effect = "Allow"
+      Principal = {
+        AWS = var.your_iam_principal_arn
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    department = "analytics"
+    job_role   = "analyst"
+  }
+}
+
+resource "aws_iam_role_policy" "abac_permanent_analytics" {
+  name = "${aws_iam_role.abac_permanent_analytics.name}-policy"
+  role = aws_iam_role.abac_permanent_analytics.id
+
+  policy = aws_iam_role_policy.abac_test["alice"].policy
+}
